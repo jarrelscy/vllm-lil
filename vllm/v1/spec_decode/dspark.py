@@ -13,6 +13,25 @@ build on the same base machinery as DFlash and specialize the draft model.
 WIP: first version reuses the DFlash-style parallel-drafting path and relies on
 the target's standard rejection-sampling verify for correctness. The DSpark
 confidence head + load-aware dynamic acceptance are deferred (throughput-only).
+
+M3 BLOCKER (next sub-step): subclassing DFlashProposer is the WRONG base for
+DSpark's runtime. DFlash's propose path calls model methods DSpark lacks
+(``precompute_and_store_context_kv`` — DFlash cross-attention context-KV), so
+init crashes at dummy_run/build_model_inputs_first_pass with
+``'DsparkMTP' object has no attribute 'precompute_and_store_context_kv'``.
+
+Correct path: base this on the EAGLE3-style proposer (which consumes the target
+aux hidden states already wired via DeepseekV4ForCausalLM.set_aux_hidden_state_layers
+== dspark_target_layer_ids [40,41,42]). The DSpark propose() must:
+  1. take the 3 aux hidden states, concat -> (T, 3*D),
+  2. DsparkMTP.model.stages[0].main_proj/main_norm -> seed,
+  3. embed [last_token, noise*4], run the 3 HC stages,
+  4. last stage: hc_head -> norm -> head logits + sequential rank-256 Markov
+     rollout (logits[i] += markov(prev_tok); sample) -> block of
+     num_speculative_tokens draft ids,
+  5. return [batch, num_speculative_tokens]; let vLLM rejection-verify vs target.
+Draft attention for the 3 stages runs through vLLM paged attention (the stages
+ARE DeepseekV4DecoderLayers); KV-cache groups for them are already registered.
 """
 
 import torch
