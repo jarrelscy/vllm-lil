@@ -16,10 +16,24 @@ through vLLM paged attention, with the target performing rejection-sampling
 verify. parallel_drafting=True (set in SpeculativeConfig) → the whole block is
 emitted in one draft forward.
 
-CURRENT BLOCKER (M3, after init-gate chain resolved): init now passes proposer
-construction, combine_hidden_states, mask_hidden, and weight load (97 params),
-then FAILS during profiling/dummy_run when the draft's HC kernels execute. vLLM
-reports `Worker failed with error ''` — the real CUDA error is MASKED by
+BLOCKER UPDATE 2 (M3): the combine_hidden_states rank crash is FIXED (rank-robust
+now: handles 1D mask_hidden + 2D propose). NEXT crash: masked, empty-message
+worker failure during profiling/dummy_run that fires AFTER draft weight-load but
+BEFORE either model forward — diagnostic markers in DsparkMultiTokenPredictor.
+forward AND target DeepseekV4Model.forward (aux path) NEVER print across full
+crash-loop cycles. So the fault is in the proposer dummy_run / draft KV-cache
+(sparse-MLA/indexer) profiling SETUP, not model.forward. tilelang's cudaDeviceReset
+teardown stub destroys the traceback even with CUDA_LAUNCH_BLOCKING=1 +
+--enforce-eager ("Worker failed with error ''"). NEXT STEPS: (a) instrument
+SpecDecodeBaseProposer.dummy_run + load_model (draft attn-group/KV init) to catch
+the pre-forward fault; (b) neutralize tilelang's atexit cudaDeviceReset so the real
+traceback prints; (c) suspect the 3 draft DeepseekV4DecoderLayers' sparse-MLA /
+indexer KV-group setup — may need constant_draft_positions or corrected dummy_run
+shapes for the HC draft.
+
+EARLIER BLOCKER (resolved): init now passes proposer
+construction, combine_hidden_states, mask_hidden, and weight load (97 params).
+The historical CUDA error during the draft HC kernels was MASKED by
 tilelang's teardown stub (`tilelang/lib/libcudart_stub.so: undefined symbol:
 cudaDeviceReset`). Hypothesis: the draft forward (DsparkMultiTokenPredictor.
 forward running the 3 DeepseekV4DecoderLayer stages via paged attention) feeds
