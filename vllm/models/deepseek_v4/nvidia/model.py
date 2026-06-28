@@ -10,6 +10,9 @@ import torch.nn as nn
 
 import vllm.envs as envs
 from vllm.config import VllmConfig
+from vllm.logger import init_logger
+
+logger = init_logger(__name__)
 from vllm.distributed import (
     get_ep_group,
     get_pp_group,
