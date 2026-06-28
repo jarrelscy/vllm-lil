@@ -724,12 +724,16 @@ class DSparkProposer(SpecDecodeBaseProposer):
         slot_mappings: dict[str, torch.Tensor]
         | list[dict[str, torch.Tensor]]
         | None = None,
+        num_speculative_tokens: int | None = None,
     ) -> torch.Tensor:
+        # num_speculative_tokens is fixed at the DSpark block size; the jasl
+        # gpu_model_runner passes it for other proposers — accept and ignore.
         del (
             target_token_ids,
             token_indices_to_sample,
             mm_embed_inputs,
             slot_mappings,
+            num_speculative_tokens,
         )
         self._last_draft_probs = None
         self._last_confidence = None

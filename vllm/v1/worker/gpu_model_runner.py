@@ -2478,12 +2478,16 @@ class GPUModelRunner(
                 cm.slot_mapping = slot_mappings[kv_cache_gid]
 
             if self.speculative_config and spec_decode_common_attn_metadata is None:
+                # NOTE: DSparkProposer intentionally NOT in this tuple — its draft
+                # self-manages KV (no vLLM kv_cache_gid), so it must take the
+                # `else` branch and receive the target's common attn metadata
+                # (mirrors the reference). Listing it here leaves metadata None
+                # and crashes the verify path.
                 if isinstance(
                     self.drafter,
                     (
                         EagleProposer,
                         DFlashProposer,
-                        DSparkProposer,
                         Gemma4Proposer,
                         ExtractHiddenStatesProposer,
                     ),
