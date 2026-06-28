@@ -349,11 +349,15 @@ class SpecDecodeBaseProposer:
             self.parallel_drafting_token_id = model_hf_config.pard_token
         elif hasattr(model_hf_config, "ptd_token_id"):
             self.parallel_drafting_token_id = model_hf_config.ptd_token_id
+        elif getattr(model_hf_config, "dspark_noise_token_id", None) is not None:
+            # DSpark seeds masked draft slots with its noise token.
+            self.parallel_drafting_token_id = model_hf_config.dspark_noise_token_id
         else:
             raise ValueError(
                 "For parallel drafting, the draft model config must have "
-                "`pard_token`, `ptd_token_id`, or "
-                "`dflash_config.mask_token_id` specified in its config.json."
+                "`pard_token`, `ptd_token_id`, "
+                "`dflash_config.mask_token_id`, or `dspark_noise_token_id` "
+                "specified in its config.json."
             )
 
         if self.pass_hidden_states_to_model:
