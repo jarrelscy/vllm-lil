@@ -1134,31 +1134,52 @@ class DeepseekV4Model(nn.Module):
 
         aux_hidden_states: list[torch.Tensor] = []
         residual, post_mix, res_mix = None, None, None
-        for idx, layer in enumerate(
-            islice(self.layers, self.start_layer, self.end_layer),
-            start=self.start_layer,
-        ):
-            hidden_states, residual, post_mix, res_mix = layer(
-                hidden_states,
-                positions,
-                input_ids,
-                post_mix,
-                res_mix,
-                residual,
+        _dspark_aux = bool(self.aux_hidden_state_layers)
+        if _dspark_aux:
+            import traceback as _tb
+
+            logger.info(
+                "DSpark target forward: aux_layers=%s hidden=%s",
+                self.aux_hidden_state_layers,
+                tuple(hidden_states.shape),
             )
-            if self.aux_hidden_state_layers and idx in self.aux_hidden_state_layers:
-                # Materialize this layer's clean HC hidden state (the fused
-                # post-mix is otherwise deferred into the next layer's pre-mix)
-                # and reduce over the hidden-chain dim, matching the DSpark
-                # reference (h.mean(dim=hc)).  Done on a side copy so the main
-                # loop's deferred (post_mix, res_mix, residual) are untouched.
-                clean = mhc_post_tilelang(
-                    hidden_states.clone(),
-                    residual.clone(),
-                    post_mix.clone(),
-                    res_mix.clone(),
+        try:
+            for idx, layer in enumerate(
+                islice(self.layers, self.start_layer, self.end_layer),
+                start=self.start_layer,
+            ):
+                hidden_states, residual, post_mix, res_mix = layer(
+                    hidden_states,
+                    positions,
+                    input_ids,
+                    post_mix,
+                    res_mix,
+                    residual,
                 )
-                aux_hidden_states.append(clean.mean(dim=1))
+                if (
+                    self.aux_hidden_state_layers
+                    and idx in self.aux_hidden_state_layers
+                ):
+                    # Materialize this layer's clean HC hidden state (the fused
+                    # post-mix is otherwise deferred into the next layer's
+                    # pre-mix) and reduce over the hidden-chain dim, matching the
+                    # DSpark reference (h.mean(dim=hc)). Done on a side copy so
+                    # the main loop's deferred mixes are untouched.
+                    clean = mhc_post_tilelang(
+                        hidden_states.clone(),
+                        residual.clone(),
+                        post_mix.clone(),
+                        res_mix.clone(),
+                    )
+                    aux_hidden_states.append(clean.mean(dim=1))
+        except Exception:
+            if _dspark_aux:
+                logger.error(
+                    "DSpark target forward FAILED (idx=%s):\n%s",
+                    locals().get("idx"),
+                    _tb.format_exc(),
+                )
+            raise
         if layer is not None:
             hidden_states = mhc_post_tilelang(
                 hidden_states, residual, post_mix, res_mix
