@@ -17,15 +17,23 @@ from .quant_config import DeepseekV4FP8Config
 if current_platform.is_rocm():
     from .amd.model import DeepseekV4ForCausalLM
     from .amd.mtp import DeepSeekV4MTP
+
+    # DSpark draft only has an NVIDIA implementation; fall back to it so the
+    # registry import resolves on all platforms.
+    from .nvidia.dspark_mtp import DsparkMTP
 elif current_platform.is_xpu():
     from .xpu.model import DeepseekV4ForCausalLM  # type: ignore[assignment]
     from .xpu.mtp import DeepSeekV4MTP  # type: ignore[assignment]
+
+    from .nvidia.dspark_mtp import DsparkMTP
 else:
     from .nvidia.model import DeepseekV4ForCausalLM  # type: ignore[assignment]
     from .nvidia.mtp import DeepSeekV4MTP  # type: ignore[assignment]
+    from .nvidia.dspark_mtp import DsparkMTP
 
 __all__ = [
     "DeepSeekV4MTP",
+    "DsparkMTP",
     "DeepseekV4FP8Config",
     "DeepseekV4ForCausalLM",
 ]
