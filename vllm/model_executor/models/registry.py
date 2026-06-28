@@ -617,7 +617,7 @@ _SPECULATIVE_DECODING_MODELS = {
     "EagleDeepSeekMTPModel": ("deepseek_eagle", "EagleDeepseekV3ForCausalLM"),
     "DeepSeekMTPModel": ("deepseek_mtp", "DeepSeekMTP"),
     "DeepSeekV4MTPModel": ("vllm.models.deepseek_v4", "DeepSeekV4MTP"),
-    "DsparkMTPModel": ("vllm.models.deepseek_v4", "DsparkMTP"),
+    "DeepSeekV4DSparkModel": ("vllm.models.deepseek_v4", "DeepSeekV4DSpark"),
     "MiniMaxM3MTP": ("vllm.models.minimax_m3", "MiniMaxM3MTP"),
     "Gemma4MTPModel": ("gemma4_mtp", "Gemma4MTP"),
     "ErnieMTPModel": ("ernie_mtp", "ErnieMTP"),

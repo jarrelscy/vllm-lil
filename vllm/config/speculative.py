@@ -332,9 +332,17 @@ class SpeculativeConfig:
             # module (hidden-chain blocks + Markov head) keyed by dspark_* config.
             # Route those to the dedicated DSpark draft/proposer; plain V4 uses MTP.
             if getattr(hf_config, "dspark_block_size", None) is not None:
-                hf_config.model_type = "dspark"
+                n_draft_layers = len(
+                    getattr(hf_config, "dspark_target_layer_ids", ())
+                )
+                n_predict = getattr(hf_config, "dspark_block_size", None)
+                hf_config.model_type = "deepseek_v4_dspark"
                 hf_config.update(
-                    {"n_predict": n_predict, "architectures": ["DsparkMTPModel"]}
+                    {
+                        "n_predict": n_predict,
+                        "dspark_num_draft_layers": n_draft_layers,
+                        "architectures": ["DeepSeekV4DSparkModel"],
+                    }
                 )
             else:
                 hf_config.model_type = "deepseek_mtp"
@@ -764,7 +772,10 @@ class SpeculativeConfig:
                     self.method = "medusa"
                 elif self.draft_model_config.hf_config.model_type == "mlp_speculator":
                     self.method = "mlp_speculator"
-                elif self.draft_model_config.hf_config.model_type == "dspark":
+                elif (
+                    self.draft_model_config.hf_config.model_type
+                    == "deepseek_v4_dspark"
+                ):
                     self.method = "dspark"
                 elif self.draft_model_config.hf_config.model_type in get_args(
                     MTPModelTypes

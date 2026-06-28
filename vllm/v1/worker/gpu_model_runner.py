@@ -178,7 +178,7 @@ from vllm.v1.sample.rejection_sampler import RejectionSampler
 from vllm.v1.sample.sampler import Sampler
 from vllm.v1.spec_decode.custom_class_proposer import create_custom_proposer
 from vllm.v1.spec_decode.dflash import DFlashProposer
-from vllm.v1.spec_decode.dspark import DSparkProposer
+from vllm.v1.spec_decode.dspark_proposer import DSparkProposer
 from vllm.v1.spec_decode.draft_model import DraftModelProposer
 from vllm.v1.spec_decode.eagle import EagleProposer
 from vllm.v1.spec_decode.extract_hidden_states import ExtractHiddenStatesProposer

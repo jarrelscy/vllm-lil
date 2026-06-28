@@ -553,7 +553,7 @@ class SpecDecodeBaseProposer:
             model = self.model
             if isinstance(model, BreakableCUDAGraphWrapper):
                 model = model.unwrap()
-            # DSpark uses its own draft class (DsparkMTP); skip the eagle/dflash
+            # DSpark uses its own draft class (DeepSeekV4DSpark); skip the eagle/dflash
             # model-class assert for it.
             if self.method != "dspark":
                 assert isinstance(
