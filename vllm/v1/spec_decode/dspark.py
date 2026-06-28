@@ -16,6 +16,22 @@ through vLLM paged attention, with the target performing rejection-sampling
 verify. parallel_drafting=True (set in SpeculativeConfig) → the whole block is
 emitted in one draft forward.
 
+CURRENT BLOCKER (M3, after init-gate chain resolved): init now passes proposer
+construction, combine_hidden_states, mask_hidden, and weight load (97 params),
+then FAILS during profiling/dummy_run when the draft's HC kernels execute. vLLM
+reports `Worker failed with error ''` — the real CUDA error is MASKED by
+tilelang's teardown stub (`tilelang/lib/libcudart_stub.so: undefined symbol:
+cudaDeviceReset`). Hypothesis: the draft forward (DsparkMultiTokenPredictor.
+forward running the 3 DeepseekV4DecoderLayer stages via paged attention) feeds
+shapes/contexts the HC/sparse-MLA kernels don't expect during dummy_run, hitting
+a CUDA fault; tilelang's broken teardown then hides it. NEXT STEPS: (1) set
+VLLM_ENABLE_V1_MULTIPROCESSING=0 or run single-proc / catch the worker exception
+to surface the real CUDA error pre-teardown; (2) audit DsparkMultiTokenPredictor.
+forward dummy_run path vs the reference DSparkBlock (it uses windowed sparse attn
+with main_x context, NOT standard paged causal attn — the stages may need a
+custom attention path or the dummy_run shapes corrected); (3) consider
+--enforce-eager to bypass cudagraph capture during bring-up.
+
 ARCHITECTURAL NOTE (M3/M4): SpecDecodeBaseProposer.__init__ auto-expands
 hidden_size *= hc_mult for DeepseekV4 (it assumes the standard V4-MTP input =
 the pre-hc_head residual of width hc_mult*D). DSpark's main_proj instead expects
