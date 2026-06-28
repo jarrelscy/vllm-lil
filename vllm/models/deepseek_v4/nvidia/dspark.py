@@ -927,16 +927,30 @@ class DeepSeekV4DSpark(nn.Module):
         return_confidence: bool = True,
         store_main_kv: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        draft_ids, logits, confidence = self.model.draft(
-            input_ids,
-            main_hidden,
-            main_positions,
-            self.lm_head,
-            self.logits_processor,
-            return_logits=return_logits,
-            return_confidence=return_confidence,
-            store_main_kv=store_main_kv,
-        )
+        try:
+            draft_ids, logits, confidence = self.model.draft(
+                input_ids,
+                main_hidden,
+                main_positions,
+                self.lm_head,
+                self.logits_processor,
+                return_logits=return_logits,
+                return_confidence=return_confidence,
+                store_main_kv=store_main_kv,
+            )
+        except BaseException as _e:  # noqa: BLE001 - diagnostic unmask
+            import traceback as _tb
+
+            logger.error(
+                "DSpark draft FAILED: input_ids=%s main_hidden=%s "
+                "main_positions=%s err=%r\n%s",
+                tuple(input_ids.shape),
+                tuple(main_hidden.shape),
+                tuple(main_positions.shape),
+                _e,
+                _tb.format_exc(),
+            )
+            raise
         return draft_ids, logits, confidence
 
     def take_last_confidence(self) -> torch.Tensor | None:
