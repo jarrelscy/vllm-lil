@@ -91,9 +91,20 @@ class DsparkStage(nn.Module):
         self.hc_dim = self.hc_mult * config.hidden_size
 
         # The HC decoder block (attn + MoE ffn + hc_attn_*/hc_ffn_* params).
+        # Use a synthetic layer index >= num_hidden_layers so the attention takes
+        # the MTP branch (compress_ratio=1, NO Lightning Indexer / compressor) —
+        # matching the reference DSpark draft, which asserts compress_ratio==0.
+        # With the natural stages.{0,1,2} prefix, extract_layer_index gives
+        # 0/1/2 and compress_ratios[2]==4 builds the indexer, whose
+        # sparse_attn_indexer profiling hard-aborts in _dummy_run. The integer in
+        # this prefix only drives extract_layer_index + the forward-context key;
+        # loaded param names come from the module hierarchy (stages.{i}.mtp_block),
+        # so the weight loader is unaffected.
+        _root = prefix.rsplit(".stages.", 1)[0] if ".stages." in prefix else prefix
+        _block_idx = config.num_hidden_layers + stage_id
         self.mtp_block = DeepseekV4DecoderLayer(
             vllm_config,
-            f"{prefix}.mtp_block",
+            f"{_root}.stages.{_block_idx}.mtp_block",
             topk_indices_buffer=topk_indices_buffer,
             aux_stream_list=aux_stream_list,
         )
