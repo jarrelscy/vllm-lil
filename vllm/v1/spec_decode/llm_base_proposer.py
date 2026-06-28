@@ -91,7 +91,12 @@ class SpecDecodeBaseProposer:
         # shape (T, hc_mult * hidden_size). Expand the hidden_states buffer
         # so target_hidden_states fits; detect DeepseekV4 via draft hf_config.
         draft_hf_config = self.draft_model_config.hf_config
-        if hasattr(draft_hf_config, "compress_ratios") and hasattr(
+        if self.method == "dspark":
+            # DSpark's aux concat (len(target_layer_ids)*D) is reduced to D by
+            # combine_hidden_states (stage0 main_proj) at the top of propose(),
+            # before it is stored — so hidden_size stays the base D, like eagle3.
+            pass
+        elif hasattr(draft_hf_config, "compress_ratios") and hasattr(
             draft_hf_config, "hc_mult"
         ):
             self.hidden_size = self.hidden_size * draft_hf_config.hc_mult
@@ -544,19 +549,22 @@ class SpecDecodeBaseProposer:
         self._last_draft_probs = None
         batch_size = common_attn_metadata.batch_size()
 
-        if self.method in ("eagle3", "dflash"):
+        if self.method in ("eagle3", "dflash", "dspark"):
             model = self.model
             if isinstance(model, BreakableCUDAGraphWrapper):
                 model = model.unwrap()
-            assert isinstance(
-                model,
-                (
-                    Eagle3LlamaForCausalLM,
-                    Eagle3DeepseekV2ForCausalLM,
-                    DFlashQwen3ForCausalLM,
-                    Eagle3Qwen3ForCausalLM,
-                ),
-            )
+            # DSpark uses its own draft class (DsparkMTP); skip the eagle/dflash
+            # model-class assert for it.
+            if self.method != "dspark":
+                assert isinstance(
+                    model,
+                    (
+                        Eagle3LlamaForCausalLM,
+                        Eagle3DeepseekV2ForCausalLM,
+                        DFlashQwen3ForCausalLM,
+                        Eagle3Qwen3ForCausalLM,
+                    ),
+                )
             target_hidden_states = self.model.combine_hidden_states(
                 target_hidden_states
             )

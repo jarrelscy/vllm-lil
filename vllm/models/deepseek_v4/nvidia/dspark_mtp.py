@@ -182,6 +182,13 @@ class DsparkMultiTokenPredictor(nn.Module):
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
 
+    def combine_hidden_states(self, target_hidden_states: torch.Tensor) -> torch.Tensor:
+        # DSpark seeds the draft from the concat of the aux target layers
+        # (dspark_target_layer_ids). Stage 0's main_proj reduces n_target*D -> D,
+        # then main_norm. Mirrors the reference `main_norm(main_proj(main_hidden))`.
+        stage0 = self.stages["0"]
+        return stage0.main_norm(stage0.main_proj(target_hidden_states))
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -190,11 +197,17 @@ class DsparkMultiTokenPredictor(nn.Module):
         inputs_embeds: torch.Tensor | None = None,
         spec_step_idx: int = 0,
     ) -> torch.Tensor:
-        # NOTE: structural placeholder — the real HC rollout + Markov sampling
-        # is driven by DSparkProposer (M3). Runs the stage blocks so shapes and
-        # attention registration are exercised; returns the last hidden state.
+        # NOTE: structural — the full reference uses main_x as the stages'
+        # attention context; here we seed by adding the combined hidden state
+        # to the draft-token embeddings, run the 3 HC stages through vLLM paged
+        # attention, and let compute_logits + target verify produce coherent
+        # output. Markov rollout / confidence head are M5 refinements.
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+        # previous_hidden_states is the combine_hidden_states output (T, D).
+        if previous_hidden_states is not None:
+            if previous_hidden_states.dim() == inputs_embeds.dim():
+                inputs_embeds = inputs_embeds + previous_hidden_states
         hidden = inputs_embeds
         if hidden.dim() == 2:
             hidden = hidden.unsqueeze(1).repeat(1, self.config.hc_mult, 1)
@@ -242,6 +255,9 @@ class DsparkMTP(nn.Module):
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.embed_input_ids(input_ids)
+
+    def combine_hidden_states(self, target_hidden_states: torch.Tensor) -> torch.Tensor:
+        return self.model.combine_hidden_states(target_hidden_states)
 
     def forward(
         self,
