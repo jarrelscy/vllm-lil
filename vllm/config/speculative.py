@@ -54,8 +54,14 @@ MTPModelTypes = Literal[
 ]
 NgramGPUTypes = Literal["ngram_gpu"]
 DFlashModelTypes = Literal["dflash"]
+DSparkModelTypes = Literal["dspark"]
 EagleModelTypes = Literal[
-    "eagle", "eagle3", "extract_hidden_states", MTPModelTypes, DFlashModelTypes
+    "eagle",
+    "eagle3",
+    "extract_hidden_states",
+    MTPModelTypes,
+    DFlashModelTypes,
+    DSparkModelTypes,
 ]
 SpeculativeMethod = Literal[
     "ngram",
@@ -321,11 +327,20 @@ class SpeculativeConfig:
                 {"n_predict": n_predict, "architectures": ["DeepSeekMTPModel"]}
             )
         if hf_config.model_type == "deepseek_v4":
-            hf_config.model_type = "deepseek_mtp"
             n_predict = getattr(hf_config, "num_nextn_predict_layers", None)
-            hf_config.update(
-                {"n_predict": n_predict, "architectures": ["DeepSeekV4MTPModel"]}
-            )
+            # DSpark checkpoints (DeepSeek-V4-*-DSpark) carry an extra speculative
+            # module (hidden-chain blocks + Markov head) keyed by dspark_* config.
+            # Route those to the dedicated DSpark draft/proposer; plain V4 uses MTP.
+            if getattr(hf_config, "dspark_block_size", None) is not None:
+                hf_config.model_type = "dspark"
+                hf_config.update(
+                    {"n_predict": n_predict, "architectures": ["DsparkMTPModel"]}
+                )
+            else:
+                hf_config.model_type = "deepseek_mtp"
+                hf_config.update(
+                    {"n_predict": n_predict, "architectures": ["DeepSeekV4MTPModel"]}
+                )
         if hf_config.model_type in ("pangu_ultra_moe"):
             hf_config.model_type = "pangu_ultra_moe_mtp"
         if hf_config.model_type == "pangu_ultra_moe_mtp":
@@ -749,6 +764,8 @@ class SpeculativeConfig:
                     self.method = "medusa"
                 elif self.draft_model_config.hf_config.model_type == "mlp_speculator":
                     self.method = "mlp_speculator"
+                elif self.draft_model_config.hf_config.model_type == "dspark":
+                    self.method = "dspark"
                 elif self.draft_model_config.hf_config.model_type in get_args(
                     MTPModelTypes
                 ):
@@ -791,7 +808,7 @@ class SpeculativeConfig:
                         self.draft_model_config.hf_config = eagle_config
                         self.update_arch_()
 
-                if self.method == "dflash":
+                if self.method in ("dflash", "dspark"):
                     self.parallel_drafting = True
 
                 if self.num_speculative_tokens is not None and hasattr(
@@ -1107,10 +1124,13 @@ class SpeculativeConfig:
         )
 
     def use_eagle(self) -> bool:
-        return self.method in ("eagle", "eagle3", "mtp", "dflash")
+        return self.method in ("eagle", "eagle3", "mtp", "dflash", "dspark")
 
     def use_dflash(self) -> bool:
         return self.method == "dflash"
+
+    def use_dspark(self) -> bool:
+        return self.method == "dspark"
 
     def uses_dynamic_speculative_decoding(self) -> bool:
         return self.num_speculative_tokens_per_batch_size is not None
