@@ -252,6 +252,17 @@ class DsparkMTP(nn.Module):
         self.model = DsparkMultiTokenPredictor(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
         )
+        # Hidden state used for masked (noise) draft slots in parallel drafting.
+        # DSpark seeds masked slots with the noise TOKEN embedding, so a zero
+        # hidden-state mask is the correct neutral stand-in. Width = aux concat
+        # (len(target_layer_ids)*D); the proposer projects it via
+        # combine_hidden_states (stage0 main_proj) -> D.
+        n_target = len(getattr(self.config, "dspark_target_layer_ids", []) or [1])
+        self.register_buffer(
+            "mask_hidden",
+            torch.zeros(1, self.config.hidden_size * n_target),
+            persistent=False,
+        )
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.embed_input_ids(input_ids)

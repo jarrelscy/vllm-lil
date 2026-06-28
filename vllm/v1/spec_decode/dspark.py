@@ -57,3 +57,9 @@ class DSparkProposer(SpecDecodeBaseProposer):
         )
         if self.dspark_noise_token_id is not None:
             self.parallel_drafting_token_id = self.dspark_noise_token_id
+
+    def _get_eagle3_use_aux_hidden_state_from_config(self):
+        # DSpark consumes the concat of aux hidden states at
+        # dspark_target_layer_ids, then projects via stage0.main_proj
+        # (combine_hidden_states). So it follows the EAGLE3 aux path.
+        return True
