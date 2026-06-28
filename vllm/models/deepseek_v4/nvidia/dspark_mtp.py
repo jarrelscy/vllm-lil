@@ -213,28 +213,45 @@ class DsparkMultiTokenPredictor(nn.Module):
         # to the draft-token embeddings, run the 3 HC stages through vLLM paged
         # attention, and let compute_logits + target verify produce coherent
         # output. Markov rollout / confidence head are M5 refinements.
-        if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
-        # previous_hidden_states is the combine_hidden_states output (T, D).
-        if previous_hidden_states is not None:
-            if previous_hidden_states.dim() == inputs_embeds.dim():
-                inputs_embeds = inputs_embeds + previous_hidden_states
-        hidden = inputs_embeds
-        if hidden.dim() == 2:
-            hidden = hidden.unsqueeze(1).repeat(1, self.config.hc_mult, 1)
-        post_mix = res_mix = residual = None
-        for i in range(self.num_stages):
-            block = self.stages[str(i)].mtp_block
-            hidden, residual, post_mix, res_mix = block(
-                x=hidden,
-                positions=positions,
-                input_ids=input_ids,
-                post_mix=post_mix,
-                res_mix=res_mix,
-                residual=residual,
+        import traceback as _tb
+
+        try:
+            if inputs_embeds is None:
+                inputs_embeds = self.embed_tokens(input_ids)
+            # previous_hidden_states is the combine_hidden_states output (T, D).
+            if previous_hidden_states is not None:
+                if previous_hidden_states.dim() == inputs_embeds.dim():
+                    inputs_embeds = inputs_embeds + previous_hidden_states
+            hidden = inputs_embeds
+            if hidden.dim() == 2:
+                hidden = hidden.unsqueeze(1).repeat(1, self.config.hc_mult, 1)
+            logger.info(
+                "DSpark draft forward: input_ids=%s positions=%s prev=%s hidden=%s",
+                tuple(input_ids.shape) if input_ids is not None else None,
+                tuple(positions.shape),
+                tuple(previous_hidden_states.shape)
+                if previous_hidden_states is not None
+                else None,
+                tuple(hidden.shape),
             )
-        hidden = mhc_post_tilelang(hidden, residual, post_mix, res_mix)
-        return hidden.flatten(1)
+            post_mix = res_mix = residual = None
+            for i in range(self.num_stages):
+                block = self.stages[str(i)].mtp_block
+                hidden, residual, post_mix, res_mix = block(
+                    x=hidden,
+                    positions=positions,
+                    input_ids=input_ids,
+                    post_mix=post_mix,
+                    res_mix=res_mix,
+                    residual=residual,
+                )
+            hidden = mhc_post_tilelang(hidden, residual, post_mix, res_mix)
+            return hidden.flatten(1)
+        except Exception:
+            # tilelang's broken teardown (cudaDeviceReset stub) masks the real
+            # error; log the true traceback before re-raising.
+            logger.error("DSpark draft forward FAILED:\n%s", _tb.format_exc())
+            raise
 
     def compute_logits(
         self,
