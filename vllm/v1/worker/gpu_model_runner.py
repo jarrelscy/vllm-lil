@@ -552,6 +552,7 @@ class GPUModelRunner(
                 | SuffixDecodingProposer
                 | EagleProposer
                 | DFlashProposer
+                | DSparkProposer
                 | DraftModelProposer
                 | MedusaProposer
                 | ExtractHiddenStatesProposer
@@ -2482,6 +2483,7 @@ class GPUModelRunner(
                     (
                         EagleProposer,
                         DFlashProposer,
+                        DSparkProposer,
                         Gemma4Proposer,
                         ExtractHiddenStatesProposer,
                     ),
@@ -4529,6 +4531,7 @@ class GPUModelRunner(
                     self.drafter,
                     EagleProposer
                     | DFlashProposer
+                    | DSparkProposer
                     | DraftModelProposer
                     | ExtractHiddenStatesProposer
                     | Gemma4Proposer,
@@ -5015,7 +5018,7 @@ class GPUModelRunner(
         ):
             assert isinstance(
                 self.drafter,
-                EagleProposer | DFlashProposer | DraftModelProposer | Gemma4Proposer,
+                EagleProposer | DFlashProposer | DraftModelProposer | Gemma4Proposer | DSparkProposer,
             )
 
             if spec_config.disable_padded_drafter_batch:
@@ -5992,6 +5995,7 @@ class GPUModelRunner(
                     self.drafter,
                     EagleProposer
                     | DFlashProposer
+                    | DSparkProposer
                     | DraftModelProposer
                     | ExtractHiddenStatesProposer
                     | Gemma4Proposer,
@@ -6896,7 +6900,7 @@ class GPUModelRunner(
         ):
             assert isinstance(
                 self.drafter,
-                EagleProposer | DFlashProposer | DraftModelProposer | Gemma4Proposer,
+                EagleProposer | DFlashProposer | DraftModelProposer | Gemma4Proposer | DSparkProposer,
             )
             self.drafter.initialize_attn_backend(kv_cache_config, kernel_block_sizes)
 
@@ -6951,6 +6955,7 @@ class GPUModelRunner(
                 self.drafter,
                 EagleProposer
                 | DFlashProposer
+                | DSparkProposer
                 | ExtractHiddenStatesProposer
                 | Gemma4Proposer,
             )

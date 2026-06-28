@@ -26,7 +26,9 @@ from vllm.distributed import (
     tensor_model_parallel_all_gather,
 )
 from vllm.logger import init_logger
-from vllm.model_executor.layers.fused_moe import FusedMoE
+from vllm.model_executor.layers.fused_moe import (
+    fused_moe_make_expert_params_mapping,
+)
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
@@ -50,6 +52,8 @@ from vllm.v1.spec_decode.dspark import (
     unpack_mhc_pre_outputs,
 )
 
+from .ops.fp8_einsum import deepseek_v4_fp8_einsum
+from .ops.o_proj import compute_fp8_einsum_recipe
 from .dspark_kernels import (
     dspark_markov_argmax,
     dspark_quant_dequant_nope,
@@ -170,8 +174,7 @@ class DeepSeekV4DSparkAttention(nn.Module):
         )
         cap = current_platform.get_device_capability()
         assert cap is not None, "DSpark attention requires a CUDA device"
-        self._einsum_recipe = (1, 128, 128) if cap.major <= 9 else (1, 1, 128)
-        self._tma_aligned_scales = cap.major >= 10
+        self._einsum_recipe, self._tma_aligned_scales = compute_fp8_einsum_recipe()
 
         self.attn_sink = nn.Parameter(
             torch.full((self.n_local_heads,), -float("inf"), dtype=torch.float32),
@@ -388,7 +391,7 @@ class DeepSeekV4DSparkAttention(nn.Module):
             dtype=self.dtype,
             device=out.device,
         )
-        torch.ops.vllm.deepseek_v4_fp8_einsum(
+        deepseek_v4_fp8_einsum(
             out_fp8,
             out_scale,
             self.wo_a.weight,
@@ -651,6 +654,13 @@ class DeepSeekV4DSparkModel(nn.Module):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
         config = vllm_config.model_config.hf_config
+        # Ensure the derived dspark_num_draft_layers exists on THIS config object
+        # (the layers read it off the same object). The draft config is parsed
+        # fresh from the checkpoint and may lack the derived attr.
+        if getattr(config, "dspark_num_draft_layers", None) is None:
+            config.dspark_num_draft_layers = len(
+                getattr(config, "dspark_target_layer_ids", ()) or ()
+            )
         self.config = config
         self.block_size = config.dspark_block_size
         self.noise_token_id = config.dspark_noise_token_id
@@ -853,6 +863,14 @@ class DeepSeekV4DSpark(nn.Module):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
         self.config = vllm_config.speculative_config.draft_model_config.hf_config
+        # The draft config is parsed fresh from the checkpoint (model_type
+        # deepseek_v4) and may not carry the derived dspark_num_draft_layers
+        # that speculative.py sets on the override path. Derive it here from
+        # the checkpoint's dspark_target_layer_ids so all downstream reads work.
+        if getattr(self.config, "dspark_num_draft_layers", None) is None:
+            self.config.dspark_num_draft_layers = len(
+                getattr(self.config, "dspark_target_layer_ids", ()) or ()
+            )
         self.model = DeepSeekV4DSparkModel(
             vllm_config=vllm_config,
             prefix=maybe_prefix(prefix, "model"),
@@ -942,7 +960,7 @@ class DeepSeekV4DSpark(nn.Module):
                 self.config.n_routed_experts
             )
         else:
-            expert_mapping = FusedMoE.make_expert_params_mapping(
+            expert_mapping = fused_moe_make_expert_params_mapping(
                 self,
                 ckpt_gate_proj_name="w1",
                 ckpt_down_proj_name="w2",

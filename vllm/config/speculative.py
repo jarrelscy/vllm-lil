@@ -819,8 +819,11 @@ class SpeculativeConfig:
                         self.draft_model_config.hf_config = eagle_config
                         self.update_arch_()
 
-                if self.method in ("dflash", "dspark"):
+                if self.method == "dflash":
                     self.parallel_drafting = True
+                # NOTE: dspark does NOT use the base parallel_drafting path —
+                # the reference DSparkProposer manages its own draft buffers +
+                # internal sliding-window cache (parallel_drafting stays False).
 
                 if self.num_speculative_tokens is not None and hasattr(
                     self.draft_model_config.hf_config, "num_lookahead_tokens"
