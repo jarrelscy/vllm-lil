@@ -48,7 +48,11 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding,
 )
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
-from vllm.model_executor.models.interfaces import MixtureOfExperts, SupportsPP
+from vllm.model_executor.models.interfaces import (
+    MixtureOfExperts,
+    SupportsEagle3,
+    SupportsPP,
+)
 from vllm.model_executor.models.utils import (
     AutoWeightsLoader,
     PPMissingLayer,
@@ -1008,6 +1012,10 @@ class DeepseekV4Model(nn.Module):
         self.hc_dim = self.hc_mult * config.hidden_size
         self.rms_norm_eps = config.rms_norm_eps
 
+        # EAGLE3 / DSpark: layer indices whose (HC-reduced) hidden states are
+        # emitted as auxiliary outputs to seed a draft model. Empty == disabled.
+        self.aux_hidden_state_layers: tuple[int, ...] = ()
+
         # Three aux streams: one per non-default input GEMM in
         # DeepseekV4Attention.attn_gemm_parallel_execute
         # (compressor kv_score, indexer.weights_proj, indexer.compressor
@@ -1124,8 +1132,12 @@ class DeepseekV4Model(nn.Module):
         if self.use_mega_moe:
             input_ids = input_ids.to(torch.int64)
 
+        aux_hidden_states: list[torch.Tensor] = []
         residual, post_mix, res_mix = None, None, None
-        for layer in islice(self.layers, self.start_layer, self.end_layer):
+        for idx, layer in enumerate(
+            islice(self.layers, self.start_layer, self.end_layer),
+            start=self.start_layer,
+        ):
             hidden_states, residual, post_mix, res_mix = layer(
                 hidden_states,
                 positions,
@@ -1134,6 +1146,19 @@ class DeepseekV4Model(nn.Module):
                 res_mix,
                 residual,
             )
+            if self.aux_hidden_state_layers and idx in self.aux_hidden_state_layers:
+                # Materialize this layer's clean HC hidden state (the fused
+                # post-mix is otherwise deferred into the next layer's pre-mix)
+                # and reduce over the hidden-chain dim, matching the DSpark
+                # reference (h.mean(dim=hc)).  Done on a side copy so the main
+                # loop's deferred (post_mix, res_mix, residual) are untouched.
+                clean = mhc_post_tilelang(
+                    hidden_states.clone(),
+                    residual.clone(),
+                    post_mix.clone(),
+                    res_mix.clone(),
+                )
+                aux_hidden_states.append(clean.mean(dim=1))
         if layer is not None:
             hidden_states = mhc_post_tilelang(
                 hidden_states, residual, post_mix, res_mix
@@ -1155,6 +1180,8 @@ class DeepseekV4Model(nn.Module):
             self.hc_eps,
         )
         hidden_states = self.norm(hidden_states)
+        if aux_hidden_states:
+            return hidden_states, aux_hidden_states
         return hidden_states
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
@@ -1381,7 +1408,9 @@ class DeepseekV4MixtureOfExperts(MixtureOfExperts):
             moe.experts.update_expert_map()
 
 
-class DeepseekV4ForCausalLM(nn.Module, SupportsPP, DeepseekV4MixtureOfExperts):
+class DeepseekV4ForCausalLM(
+    nn.Module, SupportsPP, SupportsEagle3, DeepseekV4MixtureOfExperts
+):
     model_cls = DeepseekV4Model
 
     # Default mapper assumes the original FP4-expert checkpoint layout.
@@ -1437,6 +1466,22 @@ class DeepseekV4ForCausalLM(nn.Module, SupportsPP, DeepseekV4MixtureOfExperts):
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.embed_input_ids(input_ids)
+
+    # ---- EAGLE3 / DSpark auxiliary hidden states ------------------------
+    def set_aux_hidden_state_layers(self, layers: tuple[int, ...]) -> None:
+        self.model.aux_hidden_state_layers = tuple(layers)
+
+    def get_eagle3_aux_hidden_state_layers(self) -> tuple[int, ...]:
+        # DSpark seeds its draft from these target layers; fall back to the
+        # generic EAGLE3 choice (low / mid / high) if unspecified.
+        ids = getattr(self.config, "dspark_target_layer_ids", None)
+        if ids:
+            return tuple(ids)
+        n = len(self.model.layers)
+        return (2, n // 2, n - 3)
+
+    def get_eagle3_default_aux_hidden_state_layers(self) -> tuple[int, ...]:
+        return self.get_eagle3_aux_hidden_state_layers()
 
     def compute_logits(
         self,
