@@ -186,8 +186,19 @@ class DsparkMultiTokenPredictor(nn.Module):
         # DSpark seeds the draft from the concat of the aux target layers
         # (dspark_target_layer_ids). Stage 0's main_proj reduces n_target*D -> D,
         # then main_norm. Mirrors the reference `main_norm(main_proj(main_hidden))`.
+        # Rank-robust: the proposer calls this both with (T, n_target*D) during
+        # propose() and with a flat 1D mask_hidden (n_target*D,) during
+        # load_model. main_norm (RMSNorm / _C.rms_norm) requires a 2D (T, D)
+        # tensor, so normalize the rank around the projection.
         stage0 = self.stages["0"]
-        return stage0.main_norm(stage0.main_proj(target_hidden_states))
+        x = target_hidden_states
+        squeeze_back = x.dim() == 1
+        if squeeze_back:
+            x = x.unsqueeze(0)
+        out = stage0.main_norm(stage0.main_proj(x))
+        if squeeze_back:
+            out = out.squeeze(0)
+        return out
 
     def forward(
         self,
